@@ -1,0 +1,115 @@
+name: Backup Sync (Failsafe)
+
+on:
+  schedule:
+    # Backup schedule: Runs offset by 2-3 minutes from main sync
+    - cron: '2,7,12,17,22,27,32,37,42,47,52,57 * * * *'  # Every 5 minutes +2 offset
+  
+  workflow_dispatch:
+
+jobs:
+  backup-sync:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Backup Court Availability Sync
+        run: |
+          echo "🔄 Backup Sync - Checking if main sync failed..."
+          echo "🕐 UTC time: $(date -u)"
+          echo "🕐 German time (CET/CEST): $(TZ='Europe/Berlin' date)"
+          
+          # Check time since last successful sync
+          recent_sync_check=$(curl -s \
+            "${{ secrets.SUPABASE_URL }}/rest/v1/sync_runs?select=started_at,status&order=started_at.desc&limit=3" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
+            -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}")
+          
+          if [ "$recent_sync_check" != "[]" ]; then
+            last_successful_sync=$(echo "$recent_sync_check" | jq -r '.[] | select(.status == "completed") | .started_at' | head -1)
+            
+            if [ -n "$last_successful_sync" ] && [ "$last_successful_sync" != "null" ]; then
+              last_sync_epoch=$(date -d "$last_successful_sync" +%s 2>/dev/null || echo "0")
+              current_epoch=$(date +%s)
+              minutes_since=$(( ($current_epoch - $last_sync_epoch) / 60 ))
+              
+              echo "📊 Minutes since last successful sync: $minutes_since"
+              
+              # Only run backup if main sync hasn't run in 8+ minutes
+              if [ "$minutes_since" -lt 8 ]; then
+                echo "✅ Main sync is working fine (${minutes_since}m ago). Backup not needed."
+                exit 0
+              fi
+              
+              echo "🚨 Main sync appears to have failed! Last successful sync was ${minutes_since}m ago."
+              echo "🔄 Running backup sync..."
+            else
+              echo "⚠️ No recent successful syncs found. Running backup sync..."
+            fi
+          else
+            echo "⚠️ No sync history found. Running backup sync..."
+          fi
+          
+          # Use Berlin timezone for business logic
+          current_hour=$(TZ='Europe/Berlin' date +%H)
+          
+          if [ "$current_hour" -ge 9 ] && [ "$current_hour" -le 20 ]; then
+            echo "🔥 Peak hours (${current_hour}:xx CET) - backup monitoring"
+            sync_type="backup-peak"
+          else
+            echo "🌙 Off-peak hours (${current_hour}:xx CET) - backup monitoring"
+            sync_type="backup-off-peak"
+          fi
+          
+          echo "🔗 URL: ${{ secrets.SUPABASE_URL }}/functions/v1/sync-availability"
+          
+          # Perform the backup sync
+          echo "🚀 Starting BACKUP sync at $(TZ='Europe/Berlin' date '+%Y-%m-%d %H:%M:%S %Z')"
+          
+          response=$(curl -s -w "%{http_code}" -X POST \
+            "${{ secrets.SUPABASE_URL }}/functions/v1/sync-availability" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
+            -H "Content-Type: application/json" \
+            -H "User-Agent: GitHub-Actions-BACKUP-$sync_type" \
+            --max-time 60 \
+            --retry 2 \
+            --retry-delay 5)
+          
+          http_code="${response: -3}"
+          body="${response%???}"
+          
+          echo "HTTP Status: $http_code"
+          
+          if [ "$http_code" != "200" ]; then
+            echo "❌ Backup sync failed with HTTP $http_code"
+            echo "Response: $body"
+            exit 1
+          fi
+          
+          success=$(echo "$body" | jq -r '.success // false')
+          if [ "$success" != "true" ]; then
+            echo "❌ Backup sync returned success=false"
+            echo "$body" | jq '.'
+            exit 1
+          fi
+          
+          # Extract and display results
+          sync_run_id=$(echo "$body" | jq -r '.syncRunId // ""')
+          clubs_synced=$(echo "$body" | jq -r '.stats.clubsSynced // 0')
+          slots_found=$(echo "$body" | jq -r '.stats.slotsFound // 0')
+          slots_updated=$(echo "$body" | jq -r '.stats.slotsUpdated // 0')
+          cancellations=$(echo "$body" | jq -r '.stats.cancellationsDetected // 0')
+          errors_count=$(echo "$body" | jq -r '.stats.errors | length')
+          
+          echo "✅ BACKUP Sync completed at $(TZ='Europe/Berlin' date '+%Y-%m-%d %H:%M:%S %Z')"
+          echo "📊 Backup Run: ${sync_run_id:0:8}... | Clubs: $clubs_synced | Slots: $slots_found | Updated: $slots_updated"
+          
+          if [ "$cancellations" -gt "0" ]; then
+            echo "🚨 $cancellations CANCELLATIONS DETECTED! 🚨"
+          fi
+          
+          if [ "$errors_count" -gt "0" ]; then
+            echo "⚠️ $errors_count errors occurred:"
+            echo "$body" | jq -r '.stats.errors[]'
+          fi
+          
+          echo "🛡️ Backup sync successful - system recovered!"
