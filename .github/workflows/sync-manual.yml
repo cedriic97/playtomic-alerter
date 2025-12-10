@@ -18,11 +18,12 @@ jobs:
         run: |
           echo "🚀 Manual sync triggered: ${{ github.event.inputs.reason }}"
           
-      - name: Trigger Supabase Edge Function
+      - name: Trigger Supabase Edge Function and Wait for Completion
         run: |
           echo "⏰ Starting sync at $(date)"
           echo "🔗 URL: ${{ secrets.SUPABASE_URL }}/functions/v1/sync-availability"
           
+          # Call the Edge Function
           response=$(curl -s -w "%{http_code}" -X POST \
             "${{ secrets.SUPABASE_URL }}/functions/v1/sync-availability" \
             -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
@@ -34,22 +35,44 @@ jobs:
           body="${response%???}"
           
           echo "HTTP Status: $http_code"
+          echo "Response: $body"
           
           if [ "$http_code" != "200" ]; then
             echo "❌ Sync failed with HTTP $http_code"
-            echo "Response: $body"
             exit 1
           fi
           
           success=$(echo "$body" | jq -r '.success // false')
           if [ "$success" != "true" ]; then
             echo "❌ Sync returned success=false"
-            echo "$body" | jq '.'
             exit 1
           fi
           
-          echo "✅ Manual sync completed successfully!"
+          # Extract sync run details
+          sync_run_id=$(echo "$body" | jq -r '.syncRunId // ""')
+          echo "📊 Sync Run ID: $sync_run_id"
+          
+          # Display immediate results
+          echo "✅ Sync completed successfully!"
+          echo "$body" | jq -r '
+            "🏢 Clubs Synced: \(.stats.clubsSynced // 0)",
+            "🎾 Slots Found: \(.stats.slotsFound // 0)", 
+            "📝 Slots Updated: \(.stats.slotsUpdated // 0)",
+            "🚨 Cancellations: \(.stats.cancellationsDetected // 0)",
+            "⚠️  Errors: \(.stats.errors | length)"
+          '
+          
+          if [ "$(echo "$body" | jq -r '.stats.errors | length')" != "0" ]; then
+            echo "❌ Errors occurred:"
+            echo "$body" | jq -r '.stats.errors[]'
+          fi
+          
+          # Show final summary
+          echo ""
+          echo "📈 Summary:"
           echo "$body" | jq '{
             syncRunId: .syncRunId,
+            message: .message,
+            timestamp: .timestamp,
             stats: .stats
           }'

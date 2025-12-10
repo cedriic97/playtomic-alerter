@@ -22,22 +22,20 @@ jobs:
             "${{ secrets.SUPABASE_URL }}/functions/v1/sync-availability" \
             -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
             -H "Content-Type: application/json" \
-            -H "User-Agent: GitHub-Actions" \
+            -H "User-Agent: GitHub-Actions-Scheduled" \
             --max-time 300)
           
           http_code="${response: -3}"
           body="${response%???}"
           
           echo "HTTP Status: $http_code"
-          echo "Response: $body"
           
-          # Prüfe auf Erfolg
           if [ "$http_code" != "200" ]; then
             echo "❌ Sync failed with HTTP $http_code"
+            echo "Response: $body"
             exit 1
           fi
           
-          # Prüfe JSON Response auf Erfolg
           success=$(echo "$body" | jq -r '.success // false')
           if [ "$success" != "true" ]; then
             echo "❌ Sync returned success=false"
@@ -45,19 +43,23 @@ jobs:
             exit 1
           fi
           
-          # Zeige Stats
-          echo "✅ Sync successful!"
-          echo "$body" | jq '{
-            syncRunId: .syncRunId,
-            clubsSynced: .stats.clubsSynced,
-            slotsFound: .stats.slotsFound,
-            slotsUpdated: .stats.slotsUpdated,
-            cancellationsDetected: .stats.cancellationsDetected,
-            errors: .stats.errors
-          }'
-          
-          # Warnung bei Cancellations
+          # Extract and display results  
+          sync_run_id=$(echo "$body" | jq -r '.syncRunId // ""')
+          clubs_synced=$(echo "$body" | jq -r '.stats.clubsSynced // 0')
+          slots_found=$(echo "$body" | jq -r '.stats.slotsFound // 0')
+          slots_updated=$(echo "$body" | jq -r '.stats.slotsUpdated // 0')
           cancellations=$(echo "$body" | jq -r '.stats.cancellationsDetected // 0')
+          errors_count=$(echo "$body" | jq -r '.stats.errors | length')
+          
+          echo "✅ Scheduled sync completed!"
+          echo "📊 Sync Run: $sync_run_id"
+          echo "🏢 Clubs: $clubs_synced | 🎾 Slots: $slots_found | 📝 Updated: $slots_updated"
+          
           if [ "$cancellations" -gt "0" ]; then
-            echo "🎾 $cancellations neue Cancellations entdeckt!"
+            echo "🚨 $cancellations neue Cancellations entdeckt!"
+          fi
+          
+          if [ "$errors_count" -gt "0" ]; then
+            echo "⚠️ $errors_count Fehler aufgetreten:"
+            echo "$body" | jq -r '.stats.errors[]'
           fi
