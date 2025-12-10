@@ -1,28 +1,29 @@
-name: Sync Court Availability
+name: Off-Peak Hours Sync (Hourly)
 
 on:
   schedule:
-    # Läuft alle 30 Minuten (optimal für Cancellation Detection)
-    - cron: '*/30 * * * *'
+    # Every hour from 9 PM to 9 AM (UTC) - maintenance monitoring
+    - cron: '0 21-23,0-8 * * *'
   
-  # Ermöglicht manuelles Triggern über GitHub UI
+  # Manual trigger
   workflow_dispatch:
 
 jobs:
-  sync:
+  off-peak-sync:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Trigger Supabase Edge Function
+      - name: Off-Peak Hours Court Sync
         run: |
-          echo "⏰ Starting scheduled sync at $(date)"
+          echo "🌙 Off-peak hours sync (hourly) at $(date)"
+          echo "🔍 Maintenance monitoring mode"
           echo "🔗 URL: ${{ secrets.SUPABASE_URL }}/functions/v1/sync-availability"
           
           response=$(curl -s -w "%{http_code}" -X POST \
             "${{ secrets.SUPABASE_URL }}/functions/v1/sync-availability" \
             -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
             -H "Content-Type: application/json" \
-            -H "User-Agent: GitHub-Actions-Scheduled" \
+            -H "User-Agent: GitHub-Actions-OffPeak" \
             --max-time 300)
           
           http_code="${response: -3}"
@@ -31,35 +32,31 @@ jobs:
           echo "HTTP Status: $http_code"
           
           if [ "$http_code" != "200" ]; then
-            echo "❌ Sync failed with HTTP $http_code"
+            echo "❌ Off-peak sync failed with HTTP $http_code"
             echo "Response: $body"
             exit 1
           fi
           
           success=$(echo "$body" | jq -r '.success // false')
           if [ "$success" != "true" ]; then
-            echo "❌ Sync returned success=false"
+            echo "❌ Off-peak sync returned success=false"
             echo "$body" | jq '.'
             exit 1
           fi
           
-          # Extract and display results  
+          # Compact reporting for off-peak hours
           sync_run_id=$(echo "$body" | jq -r '.syncRunId // ""')
-          clubs_synced=$(echo "$body" | jq -r '.stats.clubsSynced // 0')
           slots_found=$(echo "$body" | jq -r '.stats.slotsFound // 0')
-          slots_updated=$(echo "$body" | jq -r '.stats.slotsUpdated // 0')
           cancellations=$(echo "$body" | jq -r '.stats.cancellationsDetected // 0')
           errors_count=$(echo "$body" | jq -r '.stats.errors | length')
           
-          echo "✅ Scheduled sync completed!"
-          echo "📊 Sync Run: $sync_run_id"
-          echo "🏢 Clubs: $clubs_synced | 🎾 Slots: $slots_found | 📝 Updated: $slots_updated"
+          echo "✅ Off-peak sync OK | Run: ${sync_run_id:0:8}... | Slots: $slots_found"
           
+          # Only highlight important events during off-peak
           if [ "$cancellations" -gt "0" ]; then
-            echo "🚨 $cancellations neue Cancellations entdeckt!"
+            echo "🚨 Late night cancellation detected: $cancellations slots!"
           fi
           
           if [ "$errors_count" -gt "0" ]; then
-            echo "⚠️ $errors_count Fehler aufgetreten:"
-            echo "$body" | jq -r '.stats.errors[]'
+            echo "⚠️ $errors_count errors during off-peak sync - check logs"
           fi

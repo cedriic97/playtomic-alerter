@@ -1,0 +1,67 @@
+name: Peak Hours Sync (Every 5 min)
+
+on:
+  schedule:
+    # Every 5 minutes from 9 AM to 9 PM (UTC) - prime time for cancellation detection
+    - cron: '*/5 9-20 * * *'
+  
+  # Manual trigger
+  workflow_dispatch:
+
+jobs:
+  peak-sync:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Peak Hours Court Sync
+        run: |
+          echo "🔥 Peak hours sync (every 5 min) at $(date)"
+          echo "🎯 Prime time for cancellation detection!"
+          echo "🔗 URL: ${{ secrets.SUPABASE_URL }}/functions/v1/sync-availability"
+          
+          response=$(curl -s -w "%{http_code}" -X POST \
+            "${{ secrets.SUPABASE_URL }}/functions/v1/sync-availability" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
+            -H "Content-Type: application/json" \
+            -H "User-Agent: GitHub-Actions-Peak" \
+            --max-time 300)
+          
+          http_code="${response: -3}"
+          body="${response%???}"
+          
+          echo "HTTP Status: $http_code"
+          
+          if [ "$http_code" != "200" ]; then
+            echo "❌ Peak sync failed with HTTP $http_code"
+            echo "Response: $body"
+            exit 1
+          fi
+          
+          success=$(echo "$body" | jq -r '.success // false')
+          if [ "$success" != "true" ]; then
+            echo "❌ Peak sync returned success=false"
+            echo "$body" | jq '.'
+            exit 1
+          fi
+          
+          # Extract results for peak hours
+          sync_run_id=$(echo "$body" | jq -r '.syncRunId // ""')
+          clubs_synced=$(echo "$body" | jq -r '.stats.clubsSynced // 0')
+          slots_found=$(echo "$body" | jq -r '.stats.slotsFound // 0')
+          slots_updated=$(echo "$body" | jq -r '.stats.slotsUpdated // 0')
+          cancellations=$(echo "$body" | jq -r '.stats.cancellationsDetected // 0')
+          errors_count=$(echo "$body" | jq -r '.stats.errors | length')
+          
+          echo "✅ Peak hours sync completed!"
+          echo "📊 Run: $sync_run_id"
+          echo "🏢 Clubs: $clubs_synced | 🎾 Slots: $slots_found | 📝 Updated: $slots_updated"
+          
+          if [ "$cancellations" -gt "0" ]; then
+            echo "🚨🚨 $cancellations CANCELLATIONS DETECTED! 🚨🚨"
+            echo "🎾 Courts became available due to cancellations!"
+          fi
+          
+          if [ "$errors_count" -gt "0" ]; then
+            echo "⚠️ $errors_count errors during peak sync:"
+            echo "$body" | jq -r '.stats.errors[]'
+          fi

@@ -25,15 +25,22 @@ Nach dem Push werden automatisch 2 Workflows erstellt:
 
 ## 📋 Verfügbare Workflows
 
-### 1. **Automatischer Sync** (`sync-courts.yml`)
-- **Zeitplan**: Alle 30 Minuten (optimal für Cancellation Detection)
+### 1. **Peak Hours Sync** (`sync-peak-hours.yml`)
+- **Zeitplan**: Alle 5 Minuten von 9:00-21:00 UTC (Prime Time!)
 - **Funktionalität**: 
-  - Läuft automatisch
-  - Zeigt detaillierte Stats
-  - Warnt bei gefundenen Cancellations
-  - Schlägt fehl bei Fehlern
+  - Aggressive Cancellation Detection
+  - Detaillierte Stats und Alerts
+  - Optimiert für Buchungszeiten
+  - Sofortige Benachrichtigung bei Cancellations
 
-### 2. **Manueller Sync** (`sync-manual.yml`)
+### 2. **Off-Peak Hours Sync** (`sync-off-peak.yml`)
+- **Zeitplan**: Stündlich von 21:00-09:00 UTC (Maintenance Mode)
+- **Funktionalität**: 
+  - Wartungsmodus mit reduzierten Logs
+  - Kompakte Berichte
+  - Nur wichtige Events werden hervorgehoben
+
+### 3. **Manueller Sync** (`sync-manual.yml`)
 - **Trigger**: Nur manuell über GitHub UI
 - **Funktionalität**:
   - Sofortiger Sync auf Knopfdruck
@@ -56,13 +63,20 @@ Nach dem Push werden automatisch 2 Workflows erstellt:
 
 ## ⚙️ Konfiguration anpassen
 
-### Zeitplan ändern:
-In `.github/workflows/sync-courts.yml` die cron Zeile anpassen:
+### Zeitplan anpassen:
+**Peak Hours** (`sync-peak-hours.yml`):
 ```yaml
 schedule:
-  - cron: '*/15 * * * *'  # Alle 15 Minuten
-  - cron: '0 * * * *'     # Jede Stunde
-  - cron: '0 8,12,16,20 * * *'  # 4x täglich
+  - cron: '*/5 9-20 * * *'   # Alle 5 Min von 9-21 Uhr
+  - cron: '*/10 9-20 * * *'  # Alle 10 Min (weniger aggressiv)  
+  - cron: '*/3 9-20 * * *'   # Alle 3 Min (sehr aggressiv)
+```
+
+**Off-Peak Hours** (`sync-off-peak.yml`):
+```yaml
+schedule:
+  - cron: '0 21-23,0-8 * * *'  # Stündlich nachts
+  - cron: '*/30 21-23,0-8 * * *' # Alle 30 Min nachts
 ```
 
 ### Notifications hinzufügen:
