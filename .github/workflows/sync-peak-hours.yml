@@ -2,8 +2,8 @@ name: Peak Hours Sync (Every 5 min)
 
 on:
   schedule:
-    # Every 5 minutes from 9 AM to 9 PM (UTC) - prime time for cancellation detection
-    - cron: '*/5 9-20 * * *'
+    # Every 5 minutes from 9 AM to 8 PM (UTC) - prime time for cancellation detection
+    - cron: '*/5 9,10,11,12,13,14,15,16,17,18,19,20 * * *'
   
   # Manual trigger
   workflow_dispatch:
