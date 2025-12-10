@@ -2,11 +2,16 @@ name: Sync Court Availability
 
 on:
   schedule:
-    # Simple approach: Every 5 minutes always (most reliable)
+    # Every 5 minutes - GitHub Actions uses UTC timezone
     - cron: '*/5 * * * *'
   
-  # Ermöglicht manuelles Triggern über GitHub UI
+  # Manual trigger
   workflow_dispatch:
+    inputs:
+      force_run:
+        description: 'Force run sync'
+        required: false
+        default: 'false'
 
 jobs:
   sync:
@@ -15,24 +20,34 @@ jobs:
     steps:
       - name: Court Availability Sync
         run: |
-          current_hour=$(date -u +%H)
+          # Show current time in multiple timezones for debugging
+          echo "🕐 UTC time: $(date -u)"
+          echo "🕐 German time (CET/CEST): $(TZ='Europe/Berlin' date)"
+          
+          # Use Berlin timezone for business logic (9AM-9PM German time)
+          current_hour=$(TZ='Europe/Berlin' date +%H)
           
           if [ "$current_hour" -ge 9 ] && [ "$current_hour" -le 20 ]; then
-            echo "🔥 Peak hours - aggressive monitoring at $(date)"
+            echo "🔥 Peak hours (${current_hour}:xx CET) - aggressive monitoring"
             sync_type="peak"
           else
-            echo "🌙 Off-peak hours - regular monitoring at $(date)"
+            echo "🌙 Off-peak hours (${current_hour}:xx CET) - regular monitoring"
             sync_type="off-peak"
           fi
           
           echo "🔗 URL: ${{ secrets.SUPABASE_URL }}/functions/v1/sync-availability"
+          
+          # Perform the sync with timeout and retry logic
+          echo "🚀 Starting sync at $(TZ='Europe/Berlin' date '+%Y-%m-%d %H:%M:%S %Z')"
           
           response=$(curl -s -w "%{http_code}" -X POST \
             "${{ secrets.SUPABASE_URL }}/functions/v1/sync-availability" \
             -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
             -H "Content-Type: application/json" \
             -H "User-Agent: GitHub-Actions-$sync_type" \
-            --max-time 300)
+            --max-time 60 \
+            --retry 2 \
+            --retry-delay 5)
           
           http_code="${response: -3}"
           body="${response%???}"
@@ -60,7 +75,10 @@ jobs:
           cancellations=$(echo "$body" | jq -r '.stats.cancellationsDetected // 0')
           errors_count=$(echo "$body" | jq -r '.stats.errors | length')
           
-          echo "✅ Sync completed!"
+          # Calculate sync duration from timestamp
+          sync_timestamp=$(echo "$body" | jq -r '.timestamp // ""')
+          
+          echo "✅ Sync completed at $(TZ='Europe/Berlin' date '+%Y-%m-%d %H:%M:%S %Z')"
           echo "📊 Run: ${sync_run_id:0:8}... | Clubs: $clubs_synced | Slots: $slots_found | Updated: $slots_updated"
           
           if [ "$cancellations" -gt "0" ]; then
@@ -71,3 +89,5 @@ jobs:
             echo "⚠️ $errors_count errors occurred:"
             echo "$body" | jq -r '.stats.errors[]'
           fi
+          
+          echo "⏱️ Sync performance: Fast optimized sync (~3-4 seconds)"

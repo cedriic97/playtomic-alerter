@@ -224,7 +224,37 @@ async function syncAvailabilityData(
   const today = new Date()
   
   for (const tenant of knownTenants) {
-    for (let day = 0; day < 7; day++) { // Reduced to 7 days for better performance
+    console.log(`🏢 Starting sync for ${tenant.tenant_name}...`)
+    
+    // Get existing slots for the next 7 days for this tenant
+    const endDate = new Date(today)
+    endDate.setDate(today.getDate() + 6)
+    const startDateStr = today.toISOString().split('T')[0]
+    const endDateStr = endDate.toISOString().split('T')[0]
+    
+    const { data: existingSlots, error: fetchError } = await supabaseClient
+      .from('available_slots')
+      .select('tenant_id, court_id, date, start_time, duration, price, is_available, availability_status')
+      .eq('tenant_id', tenant.tenant_id)
+      .gte('date', startDateStr)
+      .lte('date', endDateStr)
+    
+    if (fetchError) {
+      stats.errors.push(`Failed to fetch existing slots for ${tenant.tenant_name}: ${fetchError.message}`)
+      continue
+    }
+
+    // Create a Map for fast lookups of existing slots
+    const existingSlotsMap = new Map<string, any>()
+    for (const slot of existingSlots || []) {
+      const key = `${slot.court_id}|${slot.date}|${slot.start_time}|${slot.duration}`
+      existingSlotsMap.set(key, slot)
+    }
+
+    // Track which slots we've seen in this sync (for cancellation detection)
+    const seenSlotsInSync = new Set<string>()
+
+    for (let day = 0; day < 7; day++) {
       const targetDate = new Date(today)
       targetDate.setDate(today.getDate() + day)
       const dateStr = targetDate.toISOString().split('T')[0]
@@ -255,34 +285,131 @@ async function syncAvailabilityData(
             continue
           }
 
-          // Process each slot
+          // Process each slot with intelligent diffing
           for (const slot of resource.slots) {
             try {
               const startTime = slot.start_time
               const endTime = addMinutesToTime(slot.start_time, slot.duration)
               const price = parseFloat(slot.price.replace(' EUR', ''))
+              const slotKey = `${resource.resource_id}|${dateStr}|${startTime}|${slot.duration}`
+              
+              // Mark this slot as seen in current sync
+              seenSlotsInSync.add(slotKey)
+              
+              const existingSlot = existingSlotsMap.get(slotKey)
+              const now = new Date().toISOString()
 
-              const { error: slotError } = await supabaseClient
-                .from('available_slots')
-                .upsert({
-                  tenant_id: tenant.tenant_id,
-                  court_id: resource.resource_id,
-                  date: dateStr,
-                  start_time: startTime,
-                  end_time: endTime,
-                  duration: slot.duration,
-                  price: price,
-                  is_available: true,
-                  availability_status: 'AVAILABLE',
-                  last_seen_at: new Date().toISOString(),
-                  sync_run_id: syncRunId
-                }, {
-                  onConflict: 'tenant_id,court_id,date,start_time,duration'
-                })
+              if (!existingSlot) {
+                // NEW SLOT: Check if this is initial load (empty table) or a cancellation
+                const daysFromNow = Math.floor((new Date(dateStr).getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+                
+                let availabilityStatus = 'AVAILABLE'
+                if (existingSlots.length > 0 && daysFromNow < 7) {
+                  // Table is NOT empty, so this is a normal sync - new slot = cancellation
+                  availabilityStatus = 'AVAILABLE_DUE_TO_CANCELLATION'
+                  console.log(`🚨 New cancellation detected: ${courtMetadata.court_name} ${dateStr} ${startTime}`)
+                  stats.cancellationsDetected++
+                } else {
+                  // Table is empty (initial load) or slot is far in future
+                  console.log(`➕ New slot: ${courtMetadata.court_name} ${dateStr} ${startTime}`)
+                }
+                
+                const { error: insertError } = await supabaseClient
+                  .from('available_slots')
+                  .insert({
+                    tenant_id: tenant.tenant_id,
+                    court_id: resource.resource_id,
+                    date: dateStr,
+                    start_time: startTime,
+                    end_time: endTime,
+                    duration: slot.duration,
+                    price: price,
+                    is_available: true,
+                    availability_status: availabilityStatus,
+                    last_seen_at: now,
+                    detected_at: now,
+                    sync_run_id: syncRunId
+                  })
 
-              if (slotError) {
-                stats.errors.push(`Slot upsert error: ${slotError.message}`)
+                if (insertError) {
+                  stats.errors.push(`Insert error: ${insertError.message}`)
+                } else {
+                  stats.slotsFound++
+                }
+              } else if (!existingSlot.is_available && existingSlot.availability_status === 'NOT_AVAILABLE') {
+                // SLOT CAME BACK: This is a real cancellation (slot was previously marked as NOT_AVAILABLE)!
+                const daysFromNow = Math.floor((new Date(dateStr).getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+                const availabilityStatus = daysFromNow < 7 ? 'AVAILABLE_DUE_TO_CANCELLATION' : 'AVAILABLE'
+                
+                if (availabilityStatus === 'AVAILABLE_DUE_TO_CANCELLATION') {
+                  console.log(`🚨 Cancellation detected: ${courtMetadata.court_name} ${dateStr} ${startTime}`)
+                  stats.cancellationsDetected++
+                }
+
+                const { error: updateError } = await supabaseClient
+                  .from('available_slots')
+                  .update({
+                    price: price,
+                    is_available: true,
+                    availability_status: availabilityStatus,
+                    last_seen_at: now,
+                    sync_run_id: syncRunId
+                  })
+                  .eq('tenant_id', tenant.tenant_id)
+                  .eq('court_id', resource.resource_id)
+                  .eq('date', dateStr)
+                  .eq('start_time', startTime)
+                  .eq('duration', slot.duration)
+
+                if (updateError) {
+                  stats.errors.push(`Cancellation update error: ${updateError.message}`)
+                } else {
+                  stats.slotsFound++
+                }
+              } else if (!existingSlot.is_available && existingSlot.availability_status === 'AVAILABLE_DUE_TO_CANCELLATION') {
+                // SLOT WAS ALREADY A CANCELLATION: Keep it as cancellation, just update metadata
+                const { error: updateError } = await supabaseClient
+                  .from('available_slots')
+                  .update({
+                    price: price,
+                    is_available: true,
+                    last_seen_at: now,
+                    sync_run_id: syncRunId
+                  })
+                  .eq('tenant_id', tenant.tenant_id)
+                  .eq('court_id', resource.resource_id)
+                  .eq('date', dateStr)
+                  .eq('start_time', startTime)
+                  .eq('duration', slot.duration)
+
+                if (updateError) {
+                  stats.errors.push(`Existing cancellation update error: ${updateError.message}`)
+                } else {
+                  stats.slotsFound++
+                }
+              } else if (existingSlot.price !== price) {
+                // PRICE CHANGED: Update price and last_seen_at
+                console.log(`💰 Price change: ${courtMetadata.court_name} ${dateStr} ${startTime}: ${existingSlot.price} → ${price}`)
+                const { error: updateError } = await supabaseClient
+                  .from('available_slots')
+                  .update({
+                    price: price,
+                    last_seen_at: now,
+                    sync_run_id: syncRunId
+                  })
+                  .eq('tenant_id', tenant.tenant_id)
+                  .eq('court_id', resource.resource_id)
+                  .eq('date', dateStr)
+                  .eq('start_time', startTime)
+                  .eq('duration', slot.duration)
+
+                if (updateError) {
+                  stats.errors.push(`Price update error: ${updateError.message}`)
+                } else {
+                  stats.slotsFound++
+                }
               } else {
+                // UNCHANGED SLOT: Will be bulk updated at the end
                 stats.slotsFound++
               }
             } catch (error) {
@@ -291,13 +418,88 @@ async function syncAvailabilityData(
           }
         }
 
-        // Add delay to respect API rate limits
-        await new Promise(resolve => setTimeout(resolve, 300))
+        // Minimal delay since we're doing much less work per slot
+        await new Promise(resolve => setTimeout(resolve, 50))
 
       } catch (error) {
         stats.errors.push(`Failed to sync ${tenant.tenant_name} on ${dateStr}: ${error.message}`)
       }
     }
+
+    // Bulk update: Set sync_run_id for ALL slots of this tenant that we've "seen" in current sync
+    console.log(`⚡ Bulk updating sync_run_id for all seen slots of ${tenant.tenant_name}`)
+    
+    try {
+      const endDate = new Date(today)
+      endDate.setDate(today.getDate() + 6)
+      const startDateStr = today.toISOString().split('T')[0]
+      const endDateStr = endDate.toISOString().split('T')[0]
+      
+      // Update all slots for this tenant in our date range that are available
+      const { error: bulkUpdateError } = await supabaseClient
+        .from('available_slots')
+        .update({ sync_run_id: syncRunId })
+        .eq('tenant_id', tenant.tenant_id)
+        .eq('is_available', true)
+        .gte('date', startDateStr)
+        .lte('date', endDateStr)
+
+      if (bulkUpdateError) {
+        stats.errors.push(`Bulk sync_run_id update error: ${bulkUpdateError.message}`)
+      }
+    } catch (error) {
+      stats.errors.push(`Bulk sync_run_id update error: ${error.message}`)
+    }
+
+    // Mark slots that weren't seen in this sync as no longer available
+    const slotsToMarkUnavailable = []
+    for (const [slotKey, slot] of existingSlotsMap.entries()) {
+      if (!seenSlotsInSync.has(slotKey) && slot.is_available) {
+        slotsToMarkUnavailable.push({
+          tenant_id: slot.tenant_id,
+          court_id: slot.court_id,
+          date: slot.date,
+          start_time: slot.start_time,
+          duration: slot.duration
+        })
+      }
+    }
+
+    // Batch update unavailable slots using a more efficient approach
+    if (slotsToMarkUnavailable.length > 0) {
+      console.log(`📝 Marking ${slotsToMarkUnavailable.length} slots as unavailable for ${tenant.tenant_name}`)
+      
+      // Process in batches of 50 for better performance
+      const batchSize = 50
+      for (let i = 0; i < slotsToMarkUnavailable.length; i += batchSize) {
+        const batch = slotsToMarkUnavailable.slice(i, i + batchSize)
+        
+        for (const slot of batch) {
+          const { error: updateError } = await supabaseClient
+            .from('available_slots')
+            .update({ 
+              is_available: false,
+              availability_status: 'NOT_AVAILABLE'
+            })
+            .eq('tenant_id', slot.tenant_id)
+            .eq('court_id', slot.court_id)
+            .eq('date', slot.date)
+            .eq('start_time', slot.start_time)
+            .eq('duration', slot.duration)
+
+          if (!updateError) {
+            stats.slotsUpdated++
+          }
+        }
+        
+        // Small delay between batches
+        if (i + batchSize < slotsToMarkUnavailable.length) {
+          await new Promise(resolve => setTimeout(resolve, 100))
+        }
+      }
+    }
+    
+    console.log(`✅ Completed sync for ${tenant.tenant_name}: ${stats.slotsFound} slots processed`)
   }
 }
 

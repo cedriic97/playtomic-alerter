@@ -1,0 +1,54 @@
+name: Monitor Sync Timing
+
+on:
+  schedule:
+    # Every 15 minutes to check if our main sync is running on schedule
+    - cron: '3,18,33,48 * * * *'
+  
+  workflow_dispatch:
+
+jobs:
+  timing-check:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Check Recent Syncs
+        run: |
+          echo "🕐 Current time:"
+          echo "  UTC: $(date -u '+%Y-%m-%d %H:%M:%S %Z')"
+          echo "  Berlin: $(TZ='Europe/Berlin' date '+%Y-%m-%d %H:%M:%S %Z')"
+          
+          echo ""
+          echo "📊 Checking recent sync runs..."
+          
+          # Check the last few sync runs from our database
+          response=$(curl -s \
+            "${{ secrets.SUPABASE_URL }}/rest/v1/sync_runs?select=id,started_at,status,slots_found,cancellations_detected&order=started_at.desc&limit=5" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
+            -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}")
+          
+          echo "Recent sync runs:"
+          echo "$response" | jq -r '.[] | "  \(.started_at) | Status: \(.status) | Slots: \(.slots_found // 0) | Cancellations: \(.cancellations_detected // 0)"'
+          
+          # Calculate time since last sync
+          last_sync=$(echo "$response" | jq -r '.[0].started_at // ""')
+          
+          if [ -n "$last_sync" ]; then
+            echo ""
+            echo "⏰ Last sync: $last_sync"
+            
+            # Check if last sync was more than 10 minutes ago (should be every 5 minutes)
+            last_sync_epoch=$(date -d "$last_sync" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%S" "${last_sync%.*}" +%s)
+            current_epoch=$(date +%s)
+            minutes_since=$((($current_epoch - $last_sync_epoch) / 60))
+            
+            echo "📈 Minutes since last sync: $minutes_since"
+            
+            if [ "$minutes_since" -gt 10 ]; then
+              echo "⚠️ WARNING: Last sync was more than 10 minutes ago! Check if GitHub Actions are running properly."
+            else
+              echo "✅ Sync timing looks good (within 10 minutes)"
+            fi
+          else
+            echo "❌ No recent syncs found!"
+          fi
