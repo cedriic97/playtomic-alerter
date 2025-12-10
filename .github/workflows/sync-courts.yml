@@ -1,29 +1,37 @@
-name: Peak Hours Sync (Every 5 min)
+name: Sync Court Availability
 
 on:
   schedule:
-    # Every 5 minutes from 9 AM to 8 PM (UTC) - prime time for cancellation detection
-    - cron: '*/5 9,10,11,12,13,14,15,16,17,18,19,20 * * *'
+    # Simple approach: Every 5 minutes always (most reliable)
+    - cron: '*/5 * * * *'
   
-  # Manual trigger
+  # Ermöglicht manuelles Triggern über GitHub UI
   workflow_dispatch:
 
 jobs:
-  peak-sync:
+  sync:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Peak Hours Court Sync
+      - name: Court Availability Sync
         run: |
-          echo "🔥 Peak hours sync (every 5 min) at $(date)"
-          echo "🎯 Prime time for cancellation detection!"
+          current_hour=$(date -u +%H)
+          
+          if [ "$current_hour" -ge 9 ] && [ "$current_hour" -le 20 ]; then
+            echo "🔥 Peak hours - aggressive monitoring at $(date)"
+            sync_type="peak"
+          else
+            echo "🌙 Off-peak hours - regular monitoring at $(date)"
+            sync_type="off-peak"
+          fi
+          
           echo "🔗 URL: ${{ secrets.SUPABASE_URL }}/functions/v1/sync-availability"
           
           response=$(curl -s -w "%{http_code}" -X POST \
             "${{ secrets.SUPABASE_URL }}/functions/v1/sync-availability" \
             -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
             -H "Content-Type: application/json" \
-            -H "User-Agent: GitHub-Actions-Peak" \
+            -H "User-Agent: GitHub-Actions-$sync_type" \
             --max-time 300)
           
           http_code="${response: -3}"
@@ -32,19 +40,19 @@ jobs:
           echo "HTTP Status: $http_code"
           
           if [ "$http_code" != "200" ]; then
-            echo "❌ Peak sync failed with HTTP $http_code"
+            echo "❌ Sync failed with HTTP $http_code"
             echo "Response: $body"
             exit 1
           fi
           
           success=$(echo "$body" | jq -r '.success // false')
           if [ "$success" != "true" ]; then
-            echo "❌ Peak sync returned success=false"
+            echo "❌ Sync returned success=false"
             echo "$body" | jq '.'
             exit 1
           fi
           
-          # Extract results for peak hours
+          # Extract and display results  
           sync_run_id=$(echo "$body" | jq -r '.syncRunId // ""')
           clubs_synced=$(echo "$body" | jq -r '.stats.clubsSynced // 0')
           slots_found=$(echo "$body" | jq -r '.stats.slotsFound // 0')
@@ -52,16 +60,14 @@ jobs:
           cancellations=$(echo "$body" | jq -r '.stats.cancellationsDetected // 0')
           errors_count=$(echo "$body" | jq -r '.stats.errors | length')
           
-          echo "✅ Peak hours sync completed!"
-          echo "📊 Run: $sync_run_id"
-          echo "🏢 Clubs: $clubs_synced | 🎾 Slots: $slots_found | 📝 Updated: $slots_updated"
+          echo "✅ Sync completed!"
+          echo "📊 Run: ${sync_run_id:0:8}... | Clubs: $clubs_synced | Slots: $slots_found | Updated: $slots_updated"
           
           if [ "$cancellations" -gt "0" ]; then
-            echo "🚨🚨 $cancellations CANCELLATIONS DETECTED! 🚨🚨"
-            echo "🎾 Courts became available due to cancellations!"
+            echo "🚨 $cancellations CANCELLATIONS DETECTED! 🚨"
           fi
           
           if [ "$errors_count" -gt "0" ]; then
-            echo "⚠️ $errors_count errors during peak sync:"
+            echo "⚠️ $errors_count errors occurred:"
             echo "$body" | jq -r '.stats.errors[]'
           fi
