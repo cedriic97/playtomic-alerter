@@ -1,0 +1,58 @@
+name: Sync Court Availability
+
+on:
+  schedule:
+    # Läuft alle 30 Minuten (optimal für Cancellation Detection)
+    - cron: '*/30 * * * *'
+  
+  # Ermöglicht manuelles Triggern über GitHub UI
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Trigger Supabase Edge Function
+        run: |
+          response=$(curl -s -w "%{http_code}" -X POST \
+            "${{ secrets.SUPABASE_URL }}/functions/v1/sync-availability" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
+            -H "Content-Type: application/json")
+          
+          http_code="${response: -3}"
+          body="${response%???}"
+          
+          echo "HTTP Status: $http_code"
+          echo "Response: $body"
+          
+          # Prüfe auf Erfolg
+          if [ "$http_code" != "200" ]; then
+            echo "❌ Sync failed with HTTP $http_code"
+            exit 1
+          fi
+          
+          # Prüfe JSON Response auf Erfolg
+          success=$(echo "$body" | jq -r '.success // false')
+          if [ "$success" != "true" ]; then
+            echo "❌ Sync returned success=false"
+            echo "$body" | jq '.'
+            exit 1
+          fi
+          
+          # Zeige Stats
+          echo "✅ Sync successful!"
+          echo "$body" | jq '{
+            syncRunId: .syncRunId,
+            clubsSynced: .stats.clubsSynced,
+            slotsFound: .stats.slotsFound,
+            slotsUpdated: .stats.slotsUpdated,
+            cancellationsDetected: .stats.cancellationsDetected,
+            errors: .stats.errors
+          }'
+          
+          # Warnung bei Cancellations
+          cancellations=$(echo "$body" | jq -r '.stats.cancellationsDetected // 0')
+          if [ "$cancellations" -gt "0" ]; then
+            echo "🎾 $cancellations neue Cancellations entdeckt!"
+          fi

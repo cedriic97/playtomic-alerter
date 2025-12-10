@@ -1,0 +1,52 @@
+name: Manual Sync (On-Demand)
+
+on:
+  # Nur manuelles Triggern über GitHub UI oder API
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Reason for manual sync'
+        required: false
+        default: 'Manual trigger'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Manual Sync Trigger
+        run: |
+          echo "🚀 Manual sync triggered: ${{ github.event.inputs.reason }}"
+          
+      - name: Trigger Supabase Edge Function
+        run: |
+          echo "⏰ Starting sync at $(date)"
+          
+          response=$(curl -s -w "%{http_code}" -X POST \
+            "${{ secrets.SUPABASE_URL }}/functions/v1/sync-availability" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
+            -H "Content-Type: application/json")
+          
+          http_code="${response: -3}"
+          body="${response%???}"
+          
+          echo "HTTP Status: $http_code"
+          
+          if [ "$http_code" != "200" ]; then
+            echo "❌ Sync failed with HTTP $http_code"
+            echo "Response: $body"
+            exit 1
+          fi
+          
+          success=$(echo "$body" | jq -r '.success // false')
+          if [ "$success" != "true" ]; then
+            echo "❌ Sync returned success=false"
+            echo "$body" | jq '.'
+            exit 1
+          fi
+          
+          echo "✅ Manual sync completed successfully!"
+          echo "$body" | jq '{
+            syncRunId: .syncRunId,
+            stats: .stats
+          }'

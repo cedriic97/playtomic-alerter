@@ -1,0 +1,20 @@
+[
+    {
+        "tenant_id": "5bb4ad71-dbd9-499e-88fb-c9a5e7df6db6",
+        "tenant_name": "Maba! Padel Mannheim",
+        "courts": [
+            { "court_name": "Court 1", "court_type": "indoor", "court_id": "64103cb0-6f0b-4d1c-84b1-cb59d61da7a8"},
+            { "court_name": "Court 2", "court_type": "indoor", "court_id": "ce22c7e5-66aa-48d7-9abf-51630e3806c6"},
+            { "court_name": "Court 3", "court_type": "indoor", "court_id": "487a38b2-76a1-4ff5-a753-dd979ea30495"},
+            { "court_name": "Court 4", "court_type": "indoor", "court_id": "290f7aaa-eed2-4e77-a66c-422c2c873f7f"},
+            { "court_name": "Court 5", "court_type": "indoor", "court_id": "c7e016a0-45e6-4bd5-b11c-f7647f87082b"},
+            { "court_name": "Court 6", "court_type": "indoor", "court_id": "dccc2f5d-472c-42c1-bc4b-1fdc8896c596"},
+            { "court_name": "Court 7", "court_type": "indoor", "court_id": "fd18ae0f-2804-4f11-b248-3413b18fa5bd"},
+            { "court_name": "Court 8", "court_type": "indoor", "court_id": "17968348-68e6-46dc-a15b-337035351135"},
+            { "court_name": "Court 9", "court_type": "indoor", "court_id": "11589765-ce70-44e9-a7c1-d257f2c89c33"},
+            { "court_name": "Court 10", "court_type": "outdoor", "court_id": "c1110cfb-350d-48e6-8669-57e432fe27c9"},
+            { "court_name": "Court 11", "court_type": "outdoor", "court_id": "75318066-28dd-40a1-8936-acb5cb61f652"},
+            { "court_name": "Court 12", "court_type": "outdoor", "court_id": "da5e34ea-c4e3-489d-8e99-a19de7933f10"}
+        ]
+    }
+]
