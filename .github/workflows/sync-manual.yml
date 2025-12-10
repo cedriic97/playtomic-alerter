@@ -28,7 +28,7 @@ jobs:
             -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
             -H "Content-Type: application/json" \
             -H "User-Agent: GitHub-Actions" \
-            --max-time 120)
+            --max-time 300)
           
           http_code="${response: -3}"
           body="${response%???}"
