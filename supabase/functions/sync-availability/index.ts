@@ -32,13 +32,13 @@ serve(async (req) => {
   const syncRunId = crypto.randomUUID()
   
   try {
-    // Create Supabase client with service role for full access
+    // Extract token from Authorization header and use for database access
+    const authHeader = req.headers.get('Authorization')
+    const token = authHeader?.replace('Bearer ', '') || ''
+    
     const supabaseClient = createClient(
       'https://xevqmfidankskdoystbd.supabase.co',
-      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhldnFtZmlkYW5rc2tkb3lzdGJkIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NTIzMTkwMSwiZXhwIjoyMDgwODA3OTAxfQ.F_AvPvW3m3fAGmgbVfNPv33FKU7N5Y7ZPzDrlNLCWrY',
-      {
-        auth: { persistSession: false }
-      }
+      token // Use the provided token for consistency
     )
 
     console.log(`🚀 Starting sync run: ${syncRunId}`)
