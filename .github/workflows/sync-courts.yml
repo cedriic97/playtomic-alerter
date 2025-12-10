@@ -15,10 +15,15 @@ jobs:
     steps:
       - name: Trigger Supabase Edge Function
         run: |
+          echo "⏰ Starting scheduled sync at $(date)"
+          echo "🔗 URL: ${{ secrets.SUPABASE_URL }}/functions/v1/sync-availability"
+          
           response=$(curl -s -w "%{http_code}" -X POST \
             "${{ secrets.SUPABASE_URL }}/functions/v1/sync-availability" \
             -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
-            -H "Content-Type: application/json")
+            -H "Content-Type: application/json" \
+            -H "User-Agent: GitHub-Actions" \
+            --max-time 120)
           
           http_code="${response: -3}"
           body="${response%???}"
