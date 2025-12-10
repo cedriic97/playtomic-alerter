@@ -31,12 +31,12 @@ jobs:
             echo "URL starts with: $(echo '${{ secrets.SUPABASE_URL }}' | cut -c1-20)..."
           fi
           
-          if [ -z "${{ secrets.SUPABASE_ANON_KEY }}" ]; then
-            echo "❌ SUPABASE_ANON_KEY secret is missing"  
+          if [ -z "${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" ]; then
+            echo "❌ SUPABASE_SERVICE_ROLE_KEY secret is missing"  
             exit 1
           else
-            echo "✅ SUPABASE_ANON_KEY secret exists"
-            echo "Key starts with: $(echo '${{ secrets.SUPABASE_ANON_KEY }}' | cut -c1-20)..."
+            echo "✅ SUPABASE_SERVICE_ROLE_KEY secret exists"
+            echo "Key starts with: $(echo '${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}' | cut -c1-20)..."
           fi
           
       - name: Test Network Connectivity
@@ -60,7 +60,7 @@ jobs:
           # Test with verbose output
           curl -v --max-time 120 \
             -X POST "$FUNCTION_URL" \
-            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
             -H "Content-Type: application/json" \
             -H "User-Agent: GitHub-Actions-Debug" \
             -o response.txt \
@@ -75,5 +75,5 @@ jobs:
           
           curl -v --max-time 30 \
             -X GET "${{ secrets.SUPABASE_URL }}/functions/v1/" \
-            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
             -w "HTTP Status: %{http_code}\n" || echo "❌ GET test failed"
